@@ -1,0 +1,127 @@
+#include <WiFi.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ST7789.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+
+// TFT Pins
+#define TFT_CS 5
+#define TFT_DC 16
+#define TFT_RST 17
+#define TFT_SDA 23
+#define TFT_SCK 18
+#define SCREEN_WIDTH 240
+#define SCREEN_HEIGHT 320
+
+Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_SDA, TFT_SCK, TFT_RST);
+
+// WiFi & MQTT
+const char* ssid = "dev";
+const char* password = "123456789";
+const char* mqtt_server = "mqtt.loathanhtoan.com";
+String mqtt_password = "GC0pCmTP2gLCiocpXyjXlVJPVkRLQuyK";
+String topic_qr, mqtt_username;
+
+WiFiClient espClient;
+PubSubClient mqtt(espClient);
+
+bool matrix[200][200];
+int matrixSize = 0;
+
+void showMsg(String msg, uint16_t color = ST77XX_WHITE) {
+  tft.fillScreen(ST77XX_BLACK);
+  tft.setTextColor(color);
+  tft.setTextSize(2);
+  tft.setCursor(20, 140);
+  tft.println(msg);
+}
+
+void drawQR() {
+  if (!matrixSize) return;
+  
+  int moduleSize = min(SCREEN_WIDTH, SCREEN_HEIGHT) / (matrixSize + 4);
+  if (moduleSize < 2) moduleSize = 2;
+  if (moduleSize > 12) moduleSize = 12;
+  
+  int qrSize = matrixSize * moduleSize;
+  int offsetX = (SCREEN_WIDTH - qrSize) / 2;
+  int offsetY = (SCREEN_HEIGHT - qrSize) / 2;
+  
+  tft.fillScreen(ST77XX_BLACK);
+  
+  for (int y = 0; y < matrixSize; y++) {
+    for (int x = 0; x < matrixSize; x++) {
+      tft.fillRect(
+        offsetX + x * moduleSize,
+        offsetY + y * moduleSize,
+        moduleSize, moduleSize,
+        matrix[y][x] ? ST77XX_WHITE : ST77XX_BLACK
+      );
+    }
+  }
+}
+
+void mqttCallback(char* topic, byte* payload, unsigned int len) {
+  String msg = "";
+  for (unsigned int i = 0; i < len; i++) msg += (char)payload[i];
+  
+  if (msg.startsWith("[[")) {
+    DynamicJsonDocument doc(50000);
+    if (deserializeJson(doc, msg) == DeserializationError::Ok) {
+      JsonArray rows = doc.as<JsonArray>();
+      matrixSize = rows.size();
+      
+      if (matrixSize >= 10 && matrixSize <= 200) {
+        for (int y = 0; y < matrixSize; y++) {
+          JsonArray row = rows[y];
+          for (int x = 0; x < matrixSize; x++) {
+            matrix[y][x] = row[x].as<bool>();
+          }
+        }
+        drawQR();
+      }
+    }
+  }
+}
+
+void connectMQTT() {
+  while (!mqtt.connected()) {
+    showMsg("MQTT...", ST77XX_YELLOW);
+    if (mqtt.connect(("ESP32_" + String(random(0xffff), HEX)).c_str(), 
+                     mqtt_username.c_str(), mqtt_password.c_str())) {
+      mqtt.subscribe(topic_qr.c_str());
+      showMsg("READY", ST77XX_GREEN);
+      delay(1000);
+    } else {
+      delay(5000);
+    }
+  }
+}
+
+void setup() {
+  tft.init(SCREEN_WIDTH, SCREEN_HEIGHT);
+  tft.setRotation(0);
+  showMsg("STARTING");
+  
+  WiFi.begin(ssid, password);
+  showMsg("WiFi...", ST77XX_YELLOW);
+  while (WiFi.status() != WL_CONNECTED) delay(500);
+  showMsg("WiFi OK", ST77XX_GREEN);
+  
+  String mac = WiFi.macAddress();
+  mac.toUpperCase();
+  mqtt_username = "external_publisher_usr@" + mac;
+  topic_qr = "CASSOROBOT" + mac + "/qr";
+  
+  mqtt.setServer(mqtt_server, 1883);
+  mqtt.setCallback(mqttCallback);
+  mqtt.setBufferSize(10240);
+  
+  connectMQTT();
+}
+
+void loop() {
+  if (!mqtt.connected()) connectMQTT();
+  mqtt.loop();
+  delay(10);
+}
