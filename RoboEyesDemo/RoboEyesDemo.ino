@@ -27,12 +27,12 @@ void setup() {
   
   // Initialize display
   tft.init(240, 320);
-  tft.setRotation(1); // Landscape mode (320x240)
+  tft.setRotation(2); // Portrait mode (240x320) - vertical
   tft.fillScreen(ST77XX_BLACK);
   
   // Initialize RoboEyes (width,height,maxFPS)
-  // Note: for rotation=1 the logical width/height are 320x240
-  eyes.begin(320, 240, 15);
+  // Note: for rotation=0 the logical width/height are 240x320
+  eyes.begin(240, 320, 15);
 
   // Configure eyes (FluxGarage API names)
   eyes.setWidth(40, 40);
