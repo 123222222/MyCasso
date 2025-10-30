@@ -1,0 +1,946 @@
+/*
+  Simple RoboEyes Example for ST7789 with Adafruit Library
+  Không cần thư viện RoboEyes, code trực tiếp!
+*/
+
+#include <Adafruit_GFX.h>
+#include <Adafruit_ST7789.h>
+#include <SPI.h>
+
+// ST7789 Pin definitions for ESP32
+#define TFT_CS   5
+#define TFT_DC   16
+#define TFT_RST  17
+#define TFT_MOSI 23  // SDA
+#define TFT_SCLK 18  // SCK
+
+// Create display object
+Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
+
+// Eye parameters (với rotation=1, màn hình 240x320 sẽ thành 320x240)
+int screenWidth = 320;
+int screenHeight = 240;
+
+// Eye position and size
+int eyeWidth = 53;      // 40 + 40/3 ≈ 53
+int eyeHeight = 67;     // 50 + 50/3 ≈ 67
+int eyeRadius = 20;     // 15 + 15/3 = 20
+int spaceBetween = 20;
+
+// Eye state
+float leftEyeOpen = 1.0;   // 0.0 = closed, 1.0 = open
+float rightEyeOpen = 1.0;
+int eyePosX = 0;  // -15 to 15
+int eyePosY = 0;  // -15 to 15
+
+// Auto blink
+unsigned long lastBlinkTime = 0;
+unsigned long nextBlinkDelay = 4000;
+
+void setup() {
+  Serial.begin(115200);
+  Serial.println("Initializing ST7789...");
+  
+  // Initialize display - thử các cấu hình khác nhau
+  tft.init(240, 320);  // Bỏ SPI_MODE2
+  
+  // Thử các rotation khác nhau nếu không hiển thị
+  tft.setRotation(1);  // Thử 0, 1, 2, 3
+  
+//   // Test màn hình
+//   Serial.println("Testing screen colors...");
+//   tft.fillScreen(ST77XX_RED);
+//   delay(500);
+//   tft.fillScreen(ST77XX_GREEN);
+//   delay(500);
+//   tft.fillScreen(ST77XX_BLUE);
+//   delay(500);
+//   tft.fillScreen(ST77XX_BLACK);
+  
+  Serial.println("RoboEyes Ready!");
+  Serial.println("Commands: 1=Happy, 2=Angry, 3=Sleepy, 4=Surprised, 5=Confused, 6=WinkLeft, 7=WinkRight, 8=Sad");
+  Serial.println("Auto mode running: blinking + looking around");
+}
+
+
+void loop() {
+  // Kiểm tra lệnh từ Serial
+  if (Serial.available() > 0) {
+    int command = Serial.parseInt();
+    Serial.read(); // Clear the newline
+    
+    switch(command) {
+      case 1:
+        Serial.println("Playing Happy animation");
+        animHappy();
+        break;
+      case 2:
+        Serial.println("Playing Angry animation");
+        animAngry();
+        break;
+      case 3:
+        Serial.println("Playing Sleepy animation");
+        animSleepy();
+        break;
+      case 4:
+        Serial.println("Playing Surprised animation");
+        animSurprised();
+        break;
+      case 5:
+        Serial.println("Playing Confused animation");
+        animConfused();
+        break;
+      case 6:
+        Serial.println("Playing Wink Left");
+        winkLeft();
+        break;
+      case 7:
+        Serial.println("Playing Wink Right");
+        winkRight();
+        break;
+      case 8:
+        Serial.println("Playing Sad animation");
+        animSad();
+        break;
+      default:
+        if(command != 0) {
+          Serial.println("Unknown command. Use 1-8:");
+          Serial.println("1=Happy, 2=Angry, 3=Sleepy, 4=Surprised, 5=Confused, 6=WinkLeft, 7=WinkRight, 8=Sad");
+        }
+        break;
+    }
+  }
+  
+  // Auto mode: blinking và look around liên tục
+  autoMode();
+}
+
+void autoMode() {
+  static unsigned long lastActionTime = 0;
+  static int sequenceStep = 0;
+  static int randomLookStep = 0;  // Cho bước 14
+  
+  unsigned long currentTime = millis();
+  unsigned long stepDelay = 1000; // Mặc định 1 giây
+  
+  // Tính delay cho từng step
+  switch(sequenceStep) {
+    case 5:
+      stepDelay = 2000; // Đứng yên 2 giây
+      break;
+    case 9:
+      stepDelay = 4000; // Sad 4 giây
+      break;
+    case 14:
+      stepDelay = 1000; // Đảo mắt tự do (xử lý trong case, tổng 10 giây)
+      break;
+    default:
+      stepDelay = 1000; // 1 giây
+      break;
+  }
+  
+  if (currentTime - lastActionTime > stepDelay) {
+    lastActionTime = currentTime;
+    
+    switch(sequenceStep) {
+      case 0:
+        // Bước 0: Nhìn góc trái trên (1 giây)
+        eyePosX = -15;
+        eyePosY = -15;
+        drawEyes();
+        break;
+        
+      case 1:
+        // Bước 1: Nhìn góc phải trên (1 giây)
+        eyePosX = 15;
+        eyePosY = -15;
+        drawEyes();
+        break;
+        
+      case 2:
+        // Bước 2: Nhìn góc trái dưới (1 giây)
+        eyePosX = -15;
+        eyePosY = 15;
+        drawEyes();
+        break;
+        
+      case 3:
+        // Bước 3: Nhìn góc phải dưới (1 giây)
+        eyePosX = 15;
+        eyePosY = 15;
+        drawEyes();
+        break;
+        
+      case 4:
+        // Bước 4: Chớp mắt → reset về giữa
+        blink();
+        lookCenter();
+        break;
+        
+      case 5:
+        // Bước 5: Đứng yên ở giữa (2 giây)
+        lookCenter();
+        drawEyes();
+        break;
+        
+      case 6:
+        // Bước 6: Nhìn trái ngang (1 giây)
+        lookLeft();
+        drawEyes();
+        break;
+        
+      case 7:
+        // Bước 7: Nhìn phải ngang (1 giây)
+        lookRight();
+        drawEyes();
+        break;
+        
+      case 8:
+        // Bước 8: Chớp mắt → reset về giữa
+        blink();
+        lookCenter();
+        break;
+        
+      case 9:
+        // Bước 9: Sad - icon sad di chuyển chéo xuống ngắn (1/4 khoảng cách)
+        lookCenter();
+        
+        // ANIMATION 1: Icon sad di chuyển chéo xuống từ từ mượt mà (2 giây)
+        for(int step = 0; step <= 40; step++) {
+          eyePosX = -(-11 * step / 40);  // Từ 0 đến 11 (45/4 ≈ 11)
+          eyePosY = -(11 * step / 40);   // Từ 0 đến -11 (45/4 ≈ 11)
+          
+          // Vẽ icon sad tại vị trí hiện tại
+          tft.fillScreen(ST77XX_BLACK);
+          
+          int leftX = screenWidth/2 - spaceBetween/2 - eyeWidth + eyePosX;
+          int rightX = screenWidth/2 + spaceBetween/2 + eyePosX;
+          int centerY = screenHeight/2 + eyePosY;
+          
+          // Vẽ mắt trái với đường \ (dùng code mắt phải của Angry)
+          drawEye(leftX, centerY, eyeWidth, eyeHeight, eyeRadius, 1.0);
+          int cutY = centerY + eyeHeight/6;
+          int bottomYPos = centerY + eyeHeight/2 + 20;
+          tft.fillTriangle(leftX - eyeWidth/2 - 10, cutY - 15, 
+                           leftX + eyeWidth/2 + 10, cutY + 15, 
+                           leftX - eyeWidth/2 - 10, bottomYPos, ST77XX_BLACK);
+          tft.fillTriangle(leftX + eyeWidth/2 + 10, cutY + 15, 
+                           leftX - eyeWidth/2 - 10, bottomYPos, 
+                           leftX + eyeWidth/2 + 10, bottomYPos, ST77XX_BLACK);
+          
+          // Vẽ mắt phải với đường / (dùng code mắt trái của Angry)
+          drawEye(rightX, centerY, eyeWidth, eyeHeight, eyeRadius, 1.0);
+          tft.fillTriangle(rightX + eyeWidth/2 + 10, cutY - 15, 
+                           rightX - eyeWidth/2 - 10, cutY + 15, 
+                           rightX + eyeWidth/2 + 10, bottomYPos, ST77XX_BLACK);
+          tft.fillTriangle(rightX - eyeWidth/2 - 10, cutY + 15, 
+                           rightX + eyeWidth/2 + 10, bottomYPos, 
+                           rightX - eyeWidth/2 - 10, bottomYPos, ST77XX_BLACK);
+          
+          delay(50);
+        }
+        
+        // Giữ nguyên vị trí cuối cùng 2 giây
+        delay(500);
+        
+        // ANIMATION 2: Icon sad di chuyển về lại vị trí ban đầu (2 giây)
+        for(int step = 40; step >= 0; step--) {
+          eyePosX = -(-11 * step / 40);  // Từ 11 về 0
+          eyePosY = -(11 * step / 40);   // Từ -11 về 0
+          
+          // Vẽ icon sad tại vị trí hiện tại
+          tft.fillScreen(ST77XX_BLACK);
+          
+          int leftX = screenWidth/2 - spaceBetween/2 - eyeWidth + eyePosX;
+          int rightX = screenWidth/2 + spaceBetween/2 + eyePosX;
+          int centerY = screenHeight/2 + eyePosY;
+          
+          // Vẽ mắt trái với đường \ (dùng code mắt phải của Angry)
+          drawEye(leftX, centerY, eyeWidth, eyeHeight, eyeRadius, 1.0);
+          int cutY = centerY + eyeHeight/6;
+          int bottomYPos = centerY + eyeHeight/2 + 20;
+          tft.fillTriangle(leftX - eyeWidth/2 - 10, cutY - 15, 
+                           leftX + eyeWidth/2 + 10, cutY + 15, 
+                           leftX - eyeWidth/2 - 10, bottomYPos, ST77XX_BLACK);
+          tft.fillTriangle(leftX + eyeWidth/2 + 10, cutY + 15, 
+                           leftX - eyeWidth/2 - 10, bottomYPos, 
+                           leftX + eyeWidth/2 + 10, bottomYPos, ST77XX_BLACK);
+          
+          // Vẽ mắt phải với đường / (dùng code mắt trái của Angry)
+          drawEye(rightX, centerY, eyeWidth, eyeHeight, eyeRadius, 1.0);
+          tft.fillTriangle(rightX + eyeWidth/2 + 10, cutY - 15, 
+                           rightX - eyeWidth/2 - 10, cutY + 15, 
+                           rightX + eyeWidth/2 + 10, bottomYPos, ST77XX_BLACK);
+          tft.fillTriangle(rightX - eyeWidth/2 - 10, cutY + 15, 
+                           rightX + eyeWidth/2 + 10, bottomYPos, 
+                           rightX - eyeWidth/2 - 10, bottomYPos, ST77XX_BLACK);
+          
+          delay(50);
+        }
+        
+        // Reset về giữa
+        lookCenter();
+        break;
+        
+      case 10:
+        // Bước 10: Chớp mắt → reset về giữa
+        blink();
+        lookCenter();
+        break;
+        
+      case 11:
+        // Bước 11: Confused (đảo mắt nhanh)
+        animConfused();
+        lookCenter();
+        break;
+        
+      case 12:
+        // Bước 12: WinkLeft
+        winkLeft();
+        lookCenter();
+        break;
+        
+      case 13:
+        // Bước 13: WinkRight
+        winkRight();
+        lookCenter();
+        break;
+        
+      case 14:
+        // Bước 14: Đảo mắt nhìn tự do trong 10 giây
+        if(randomLookStep == 0) {
+          randomLookStep = 0;
+        }
+        
+        // Random vị trí mắt
+        switch(randomLookStep) {
+          case 0:
+            eyePosX = -15; eyePosY = -15; // Trái trên
+            break;
+          case 1:
+            eyePosX = 15; eyePosY = -15; // Phải trên
+            break;
+          case 2:
+            eyePosX = 0; eyePosY = -15; // Giữa trên
+            break;
+          case 3:
+            eyePosX = -15; eyePosY = 0; // Trái giữa
+            break;
+          case 4:
+            eyePosX = 15; eyePosY = 0; // Phải giữa
+            break;
+          case 5:
+            eyePosX = 0; eyePosY = 0; // Giữa
+            break;
+          case 6:
+            eyePosX = -15; eyePosY = 15; // Trái dưới
+            break;
+          case 7:
+            eyePosX = 15; eyePosY = 15; // Phải dưới
+            break;
+          case 8:
+            eyePosX = 0; eyePosY = 15; // Giữa dưới
+            break;
+          case 9:
+            eyePosX = 0; eyePosY = 0; // Về giữa
+            break;
+        }
+        
+        drawEyes();
+        randomLookStep++;
+        
+        // Sau 10 lần (10 giây), chuyển bước tiếp theo
+        if(randomLookStep >= 10) {
+          randomLookStep = 0;
+          lookCenter();
+          sequenceStep++; // Chuyển sang bước tiếp theo
+        }
+        break;
+        
+      default:
+        // Quay về bước 0
+        sequenceStep = -1; // Sẽ thành 0 ở cuối switch
+        break;
+    }
+    
+    if(sequenceStep != 14) {  // Chỉ tăng nếu không phải bước 14
+      sequenceStep++;
+    }
+    
+    if (sequenceStep > 14) sequenceStep = 0; // Reset về bước 0
+  }
+  
+  // Chỉ vẽ lại nếu đang ở các bước tĩnh (0-3, 5-7, 14)
+  if(sequenceStep >= 0 && sequenceStep <= 3) {
+    delay(50);  // Chỉ delay, không vẽ lại vì đã vẽ trong case
+  } else if(sequenceStep == 5 || sequenceStep == 6 || sequenceStep == 7) {
+    delay(50);  // Chỉ delay, không vẽ lại vì đã vẽ trong case
+  } else if(sequenceStep == 14) {
+    delay(50);  // Chỉ delay, không vẽ lại vì đã vẽ trong case 14
+  } else {
+    delay(50);  // Các bước animation sẽ tự vẽ
+  }
+}
+
+void demoSequence() {
+  // 1. Normal blinking
+  lookCenter();
+  for(int i=0; i<30; i++) {
+    if (random(100) < 5) blink();
+    drawEyes();
+    delay(100);
+  }
+  
+  // 2. Look around
+  lookLeft();
+  for(int i=0; i<20; i++) { drawEyes(); delay(50); }
+  
+  lookRight();
+  for(int i=0; i<20; i++) { drawEyes(); delay(50); }
+  
+  lookUp();
+  for(int i=0; i<20; i++) { drawEyes(); delay(50); }
+  
+  lookDown();
+  for(int i=0; i<20; i++) { drawEyes(); delay(50); }
+  
+  lookCenter();
+  
+  // 3. Happy eyes
+  animHappy();
+  delay(1000);
+  
+  // 4. Angry eyes
+  animAngry();
+  delay(1000);
+  
+  // 5. Sleepy
+  transitionBlink();
+  animSleepy();
+  delay(1000);
+  
+  // 6. Surprised
+  transitionZoomOut();
+  animSurprised();
+  delay(1000);
+  
+  // 7. Confused (shake)
+  transitionBlink();
+  animConfused();
+  delay(1000);
+  
+  // 8. Wink
+  transitionZoomOut();
+  winkLeft();
+  delay(500);
+  winkRight();
+  delay(500);
+}
+
+void drawEyes() {
+  tft.fillScreen(ST77XX_BLACK);
+  
+  // Calculate eye positions (căn giữa màn hình)
+  int leftX = screenWidth/2 - spaceBetween/2 - eyeWidth + eyePosX;
+  int rightX = screenWidth/2 + spaceBetween/2 + eyePosX;
+  int centerY = screenHeight/2 + eyePosY;
+  
+  // Draw left eye
+  drawEye(leftX, centerY, eyeWidth, eyeHeight, eyeRadius, leftEyeOpen);
+  
+  // Draw right eye
+  drawEye(rightX, centerY, eyeWidth, eyeHeight, eyeRadius, rightEyeOpen);
+}
+
+void drawEye(int centerX, int centerY, int w, int h, int r, float openness) {
+  int effectiveHeight = h * openness;
+  
+  if (effectiveHeight < 2) return; // Eye closed
+  
+  int x = centerX - w/2;
+  int y = centerY - effectiveHeight/2;
+  
+  // Draw full black eye (không còn lỗ ở giữa)
+  tft.fillRoundRect(x, y, w, effectiveHeight, r, ST77XX_WHITE);
+}
+
+void blink() {
+  // Close eyes
+  for (int i = 10; i >= 0; i--) {
+    leftEyeOpen = i / 10.0;
+    rightEyeOpen = i / 10.0;
+    drawEyes();
+    delay(20);
+  }
+  
+  delay(100);
+  
+  // Open eyes
+  for (int i = 0; i <= 10; i++) {
+    leftEyeOpen = i / 10.0;
+    rightEyeOpen = i / 10.0;
+    drawEyes();
+    delay(20);
+  }
+}
+
+// Example functions to control eyes:
+void lookLeft() {
+  eyePosX = -15;
+}
+
+void lookRight() {
+  eyePosX = 15;
+}
+
+void lookUp() {
+  eyePosY = -15;
+}
+
+void lookDown() {
+  eyePosY = 15;
+}
+
+void lookCenter() {
+  eyePosX = 0;
+  eyePosY = 0;
+}
+
+// ========== TRANSITION EFFECTS ==========
+
+void transitionBlink() {
+  // Nhắm mắt rồi mở ra - dùng để chuyển cảnh
+  for (int i = 10; i >= 0; i--) {
+    leftEyeOpen = i / 10.0;
+    rightEyeOpen = i / 10.0;
+    drawEyes();
+    delay(15);
+  }
+  
+  delay(50);
+  
+  for (int i = 0; i <= 10; i++) {
+    leftEyeOpen = i / 10.0;
+    rightEyeOpen = i / 10.0;
+    drawEyes();
+    delay(15);
+  }
+}
+
+void transitionZoomOut() {
+  // Thu nhỏ mắt về điểm giữa
+  int origWidth = eyeWidth;
+  int origHeight = eyeHeight;
+  
+  for(int i = 10; i >= 0; i--) {
+    eyeWidth = origWidth * i / 10;
+    eyeHeight = origHeight * i / 10;
+    if(eyeWidth < 5) eyeWidth = 5;
+    if(eyeHeight < 5) eyeHeight = 5;
+    drawEyes();
+    delay(20);
+  }
+  
+  // Phóng to trở lại
+  for(int i = 0; i <= 10; i++) {
+    eyeWidth = origWidth * i / 10;
+    eyeHeight = origHeight * i / 10;
+    if(eyeWidth < 5) eyeWidth = 5;
+    if(eyeHeight < 5) eyeHeight = 5;
+    drawEyes();
+    delay(20);
+  }
+  
+  eyeWidth = origWidth;
+  eyeHeight = origHeight;
+}
+
+// ========== ANIMATIONS ==========
+
+void animHappy() {
+  // Happy eyes: > < với animation nhảy nhót vui vẻ
+  
+  // PHASE 1: Thu nhỏ mắt bình thường xuống 50%
+  int origWidth = eyeWidth;
+  int origHeight = eyeHeight;
+  
+  for(int i = 10; i >= 5; i--) {
+    eyeWidth = origWidth * i / 10;
+    eyeHeight = origHeight * i / 10;
+    drawEyes();
+    delay(30);
+  }
+  
+  // PHASE 2: Animation happy với hiệu ứng phóng to và nhảy nhót
+  for(int i=0; i<30; i++) {
+    tft.fillScreen(ST77XX_BLACK);
+    
+    // Animation: mắt nhảy lên xuống
+    int bounce = sin(i * 0.5) * 8;  // Tạo hiệu ứng nhảy
+    
+    // Tính toán độ phóng to dần (từ 50% lên full size trong 10 frame đầu)
+    float scale = 1.0;
+    if(i < 10) {
+      scale = 0.5 + (i / 10.0) * 0.5;  // Từ 0.5 lên 1.0
+    }
+    
+    // Calculate eye positions (gần nhau hơn nhiều)
+    int leftX = screenWidth/2 - 25 + eyePosX;   // Gần nhau hơn
+    int rightX = screenWidth/2 + 25 + eyePosX;  // Gần nhau hơn
+    int centerY = screenHeight/2 + eyePosY + bounce;
+    
+    int eyeSize = 40 * scale;  // Độ dài mỗi nửa của mắt với scale
+    
+    // Draw left eye: > (vẽ đậm hơn nhiều - offset lớn hơn)
+    // Đường trên: từ giữa lên chéo trái
+    for(int offset = -8; offset <= 8; offset++) {
+      tft.drawLine(leftX+offset, centerY, leftX - eyeSize+offset, centerY - eyeSize/2, ST77XX_WHITE);
+      tft.drawLine(leftX, centerY+offset, leftX - eyeSize, centerY - eyeSize/2+offset, ST77XX_WHITE);
+    }
+    
+    // Đường dưới: từ giữa xuống chéo trái
+    for(int offset = -8; offset <= 8; offset++) {
+      tft.drawLine(leftX+offset, centerY, leftX - eyeSize+offset, centerY + eyeSize/2, ST77XX_WHITE);
+      tft.drawLine(leftX, centerY+offset, leftX - eyeSize, centerY + eyeSize/2+offset, ST77XX_WHITE);
+    }
+    
+    // Draw right eye: < (vẽ đậm hơn nhiều - offset lớn hơn)
+    // Đường trên: từ giữa lên chéo phải
+    for(int offset = -8; offset <= 8; offset++) {
+      tft.drawLine(rightX+offset, centerY, rightX + eyeSize+offset, centerY - eyeSize/2, ST77XX_WHITE);
+      tft.drawLine(rightX, centerY+offset, rightX + eyeSize, centerY - eyeSize/2+offset, ST77XX_WHITE);
+    }
+    
+    // Đường dưới: từ giữa xuống chéo phải
+    for(int offset = -8; offset <= 8; offset++) {
+      tft.drawLine(rightX+offset, centerY, rightX + eyeSize+offset, centerY + eyeSize/2, ST77XX_WHITE);
+      tft.drawLine(rightX, centerY+offset, rightX + eyeSize, centerY + eyeSize/2+offset, ST77XX_WHITE);
+    }
+    
+    delay(50);
+  }
+  
+  // PHASE 3: Thu nhỏ lại và reset về mắt bình thường
+  for(int i = 10; i >= 0; i--) {
+    tft.fillScreen(ST77XX_BLACK);
+    
+    int leftX = screenWidth/2 - 25 + eyePosX;
+    int rightX = screenWidth/2 + 25 + eyePosX;
+    int centerY = screenHeight/2 + eyePosY;
+    
+    float scale = i / 10.0;
+    int eyeSize = 40 * scale;
+    
+    if(eyeSize > 5) {
+      // Draw left eye: >
+      for(int offset = -8; offset <= 8; offset++) {
+        tft.drawLine(leftX+offset, centerY, leftX - eyeSize+offset, centerY - eyeSize/2, ST77XX_WHITE);
+        tft.drawLine(leftX, centerY+offset, leftX - eyeSize, centerY - eyeSize/2+offset, ST77XX_WHITE);
+      }
+      
+      for(int offset = -8; offset <= 8; offset++) {
+        tft.drawLine(leftX+offset, centerY, leftX - eyeSize+offset, centerY + eyeSize/2, ST77XX_WHITE);
+        tft.drawLine(leftX, centerY+offset, leftX - eyeSize, centerY + eyeSize/2+offset, ST77XX_WHITE);
+      }
+      
+      // Draw right eye: <
+      for(int offset = -8; offset <= 8; offset++) {
+        tft.drawLine(rightX+offset, centerY, rightX + eyeSize+offset, centerY - eyeSize/2, ST77XX_WHITE);
+        tft.drawLine(rightX, centerY+offset, rightX + eyeSize, centerY - eyeSize/2+offset, ST77XX_WHITE);
+      }
+      
+      for(int offset = -8; offset <= 8; offset++) {
+        tft.drawLine(rightX+offset, centerY, rightX + eyeSize+offset, centerY + eyeSize/2, ST77XX_WHITE);
+        tft.drawLine(rightX, centerY+offset, rightX + eyeSize, centerY + eyeSize/2+offset, ST77XX_WHITE);
+      }
+    }
+    
+    delay(30);
+  }
+  
+  // Reset về mắt bình thường
+  eyeWidth = origWidth;
+  eyeHeight = origHeight;
+  eyeRadius = 20;
+}
+
+void animAngry() {
+  // Angry eyes: cắt phần dưới của mắt bằng đường chéo (lật dọc)
+  
+  // PHASE 1: Thu nhỏ mắt bình thường xuống 50%
+  int origWidth = eyeWidth;
+  int origHeight = eyeHeight;
+  
+  for(int i = 10; i >= 5; i--) {
+    eyeWidth = origWidth * i / 10;
+    eyeHeight = origHeight * i / 10;
+    drawEyes();
+    delay(30);
+  }
+  
+  // PHASE 2: Animation angry với hiệu ứng phóng to dần
+  for(int i=0; i<30; i++) {
+    tft.fillScreen(ST77XX_BLACK);
+    
+    // Tính toán độ phóng to dần (từ 50% lên full size trong 10 frame đầu)
+    float scale = 1.0;
+    if(i < 10) {
+      scale = 0.5 + (i / 10.0) * 0.5;  // Từ 0.5 lên 1.0
+    }
+    
+    int scaledWidth = origWidth * scale;
+    int scaledHeight = origHeight * scale;
+    
+    // Calculate eye positions (giống drawEyes())
+    int leftX = screenWidth/2 - spaceBetween/2 - scaledWidth + eyePosX;
+    int rightX = screenWidth/2 + spaceBetween/2 + eyePosX;
+    int centerY = screenHeight/2 + eyePosY;
+    
+    // Vẽ mắt trái - bị cắt phần dưới bởi đường chéo 
+    drawEye(leftX, centerY, scaledWidth, scaledHeight, eyeRadius * scale, 1.0);
+    
+    // Xóa phần dưới mắt trái bằng tam giác đen (đường / từ phải thấp xuống trái cao)
+    int cutY = centerY + scaledHeight/6;  // Vị trí cắt ở phần dưới
+    int bottomYPos = centerY + scaledHeight/2 + 20;
+    tft.fillTriangle(leftX + scaledWidth/2 + 10, cutY - 15, 
+                     leftX - scaledWidth/2 - 10, cutY + 15, 
+                     leftX + scaledWidth/2 + 10, bottomYPos, ST77XX_BLACK);
+    tft.fillTriangle(leftX - scaledWidth/2 - 10, cutY + 15, 
+                     leftX + scaledWidth/2 + 10, bottomYPos, 
+                     leftX - scaledWidth/2 - 10, bottomYPos, ST77XX_BLACK);
+    
+    // Vẽ mắt phải - bị cắt phần dưới bởi đường chéo 
+    drawEye(rightX, centerY, scaledWidth, scaledHeight, eyeRadius * scale, 1.0);
+    
+    // Xóa phần dưới mắt phải bằng tam giác đen (đường \ từ trái thấp xuống phải cao)
+    tft.fillTriangle(rightX - scaledWidth/2 - 10, cutY - 15, 
+                     rightX + scaledWidth/2 + 10, cutY + 15, 
+                     rightX - scaledWidth/2 - 10, bottomYPos, ST77XX_BLACK);
+    tft.fillTriangle(rightX + scaledWidth/2 + 10, cutY + 15, 
+                     rightX - scaledWidth/2 - 10, bottomYPos, 
+                     rightX + scaledWidth/2 + 10, bottomYPos, ST77XX_BLACK);
+    
+    delay(50);
+  }
+  
+  // PHASE 3: Thu nhỏ lại và reset về mắt bình thường
+  for(int i = 10; i >= 0; i--) {
+    tft.fillScreen(ST77XX_BLACK);
+    
+    float scale = i / 10.0;
+    int scaledWidth = origWidth * scale;
+    int scaledHeight = origHeight * scale;
+    
+    if(scaledWidth > 5 && scaledHeight > 5) {
+      int leftX = screenWidth/2 - spaceBetween/2 - scaledWidth + eyePosX;
+      int rightX = screenWidth/2 + spaceBetween/2 + eyePosX;
+      int centerY = screenHeight/2 + eyePosY;
+      
+      // Vẽ mắt trái
+      drawEye(leftX, centerY, scaledWidth, scaledHeight, eyeRadius * scale, 1.0);
+      
+      int cutY = centerY + scaledHeight/6;
+      int bottomYPos = centerY + scaledHeight/2 + 20;
+      tft.fillTriangle(leftX + scaledWidth/2 + 10, cutY - 15, 
+                       leftX - scaledWidth/2 - 10, cutY + 15, 
+                       leftX + scaledWidth/2 + 10, bottomYPos, ST77XX_BLACK);
+      tft.fillTriangle(leftX - scaledWidth/2 - 10, cutY + 15, 
+                       leftX + scaledWidth/2 + 10, bottomYPos, 
+                       leftX - scaledWidth/2 - 10, bottomYPos, ST77XX_BLACK);
+      
+      // Vẽ mắt phải
+      drawEye(rightX, centerY, scaledWidth, scaledHeight, eyeRadius * scale, 1.0);
+      
+      tft.fillTriangle(rightX - scaledWidth/2 - 10, cutY - 15, 
+                       rightX + scaledWidth/2 + 10, cutY + 15, 
+                       rightX - scaledWidth/2 - 10, bottomYPos, ST77XX_BLACK);
+      tft.fillTriangle(rightX + scaledWidth/2 + 10, cutY + 15, 
+                       rightX - scaledWidth/2 - 10, bottomYPos, 
+                       rightX + scaledWidth/2 + 10, bottomYPos, ST77XX_BLACK);
+    }
+    
+    delay(30);
+  }
+  
+  // Reset về mắt bình thường
+  eyeWidth = origWidth;
+  eyeHeight = origHeight;
+  eyeRadius = 20;
+  eyePosY = 0;
+}
+
+void animSleepy() {
+  // Half-closed eyes
+  leftEyeOpen = 0.4;
+  rightEyeOpen = 0.4;
+  lookDown();
+  for(int i=0; i<30; i++) {
+    drawEyes();
+    delay(100);
+  }
+  leftEyeOpen = 1.0;
+  rightEyeOpen = 1.0;
+  lookCenter();
+}
+
+void animSurprised() {
+  // Very wide eyes
+  eyeWidth = 50;
+  eyeHeight = 70;
+  spaceBetween = 30;
+  for(int i=0; i<30; i++) {
+    drawEyes();
+    delay(50);
+  }
+  eyeWidth = 40;
+  eyeHeight = 50;
+  spaceBetween = 20;
+}
+
+void animConfused() {
+  // Shake left and right
+  for(int i=0; i<5; i++) {
+    lookLeft();
+    drawEyes();
+    delay(100);
+    lookRight();
+    drawEyes();
+    delay(100);
+  }
+  lookCenter();
+}
+
+void animSad() {
+  // Sad eyes: copy y chang Angry nhưng HOÁN ĐỔI vị trí mắt trái <-> mắt phải
+  
+  // PHASE 1: Thu nhỏ mắt bình thường xuống 50%
+  int origWidth = eyeWidth;
+  int origHeight = eyeHeight;
+  
+  for(int i = 10; i >= 5; i--) {
+    eyeWidth = origWidth * i / 10;
+    eyeHeight = origHeight * i / 10;
+    drawEyes();
+    delay(30);
+  }
+  
+  // PHASE 2: Animation sad với hiệu ứng phóng to dần
+  for(int i=0; i<30; i++) {
+    tft.fillScreen(ST77XX_BLACK);
+    
+    // Tính toán độ phóng to dần (từ 50% lên full size trong 10 frame đầu)
+    float scale = 1.0;
+    if(i < 10) {
+      scale = 0.5 + (i / 10.0) * 0.5;  // Từ 0.5 lên 1.0
+    }
+    
+    int scaledWidth = origWidth * scale;
+    int scaledHeight = origHeight * scale;
+    
+    // Calculate eye positions (giống drawEyes())
+    int leftX = screenWidth/2 - spaceBetween/2 - scaledWidth + eyePosX;
+    int rightX = screenWidth/2 + spaceBetween/2 + eyePosX;
+    int centerY = screenHeight/2 + eyePosY;
+    
+    // Vẽ mắt trái - DÙNG CODE CỦA MẮT PHẢI ANGRY (đường \)
+    drawEye(leftX, centerY, scaledWidth, scaledHeight, eyeRadius * scale, 1.0);
+    
+    // Xóa phần dưới mắt trái bằng tam giác đen (đường \ từ trái thấp xuống phải cao)
+    int cutY = centerY + scaledHeight/6;  // Vị trí cắt ở phần dưới
+    int bottomYPos = centerY + scaledHeight/2 + 20;
+    tft.fillTriangle(leftX - scaledWidth/2 - 10, cutY - 15, 
+                     leftX + scaledWidth/2 + 10, cutY + 15, 
+                     leftX - scaledWidth/2 - 10, bottomYPos, ST77XX_BLACK);
+    tft.fillTriangle(leftX + scaledWidth/2 + 10, cutY + 15, 
+                     leftX - scaledWidth/2 - 10, bottomYPos, 
+                     leftX + scaledWidth/2 + 10, bottomYPos, ST77XX_BLACK);
+    
+    // Vẽ mắt phải - DÙNG CODE CỦA MẮT TRÁI ANGRY (đường /)
+    drawEye(rightX, centerY, scaledWidth, scaledHeight, eyeRadius * scale, 1.0);
+    
+    // Xóa phần dưới mắt phải bằng tam giác đen (đường / từ phải thấp xuống trái cao)
+    tft.fillTriangle(rightX + scaledWidth/2 + 10, cutY - 15, 
+                     rightX - scaledWidth/2 - 10, cutY + 15, 
+                     rightX + scaledWidth/2 + 10, bottomYPos, ST77XX_BLACK);
+    tft.fillTriangle(rightX - scaledWidth/2 - 10, cutY + 15, 
+                     rightX + scaledWidth/2 + 10, bottomYPos, 
+                     rightX - scaledWidth/2 - 10, bottomYPos, ST77XX_BLACK);
+    
+    delay(50);
+  }
+  
+  // PHASE 3: Thu nhỏ lại và reset về mắt bình thường
+  for(int i = 10; i >= 0; i--) {
+    tft.fillScreen(ST77XX_BLACK);
+    
+    float scale = i / 10.0;
+    int scaledWidth = origWidth * scale;
+    int scaledHeight = origHeight * scale;
+    
+    if(scaledWidth > 5 && scaledHeight > 5) {
+      int leftX = screenWidth/2 - spaceBetween/2 - scaledWidth + eyePosX;
+      int rightX = screenWidth/2 + spaceBetween/2 + eyePosX;
+      int centerY = screenHeight/2 + eyePosY;
+      
+      // Vẽ mắt trái - DÙNG CODE CỦA MẮT PHẢI ANGRY
+      drawEye(leftX, centerY, scaledWidth, scaledHeight, eyeRadius * scale, 1.0);
+      
+      int cutY = centerY + scaledHeight/6;
+      int bottomYPos = centerY + scaledHeight/2 + 20;
+      tft.fillTriangle(leftX - scaledWidth/2 - 10, cutY - 15, 
+                       leftX + scaledWidth/2 + 10, cutY + 15, 
+                       leftX - scaledWidth/2 - 10, bottomYPos, ST77XX_BLACK);
+      tft.fillTriangle(leftX + scaledWidth/2 + 10, cutY + 15, 
+                       leftX - scaledWidth/2 - 10, bottomYPos, 
+                       leftX + scaledWidth/2 + 10, bottomYPos, ST77XX_BLACK);
+      
+      // Vẽ mắt phải - DÙNG CODE CỦA MẮT TRÁI ANGRY
+      drawEye(rightX, centerY, scaledWidth, scaledHeight, eyeRadius * scale, 1.0);
+      
+      tft.fillTriangle(rightX + scaledWidth/2 + 10, cutY - 15, 
+                       rightX - scaledWidth/2 - 10, cutY + 15, 
+                       rightX + scaledWidth/2 + 10, bottomYPos, ST77XX_BLACK);
+      tft.fillTriangle(rightX - scaledWidth/2 - 10, cutY + 15, 
+                       rightX + scaledWidth/2 + 10, bottomYPos, 
+                       rightX - scaledWidth/2 - 10, bottomYPos, ST77XX_BLACK);
+    }
+    
+    delay(30);
+  }
+  
+  // Reset về mắt bình thường
+  eyeWidth = origWidth;
+  eyeHeight = origHeight;
+  eyeRadius = 20;
+  eyePosY = 0;
+}
+
+void winkLeft() {
+  // Close left eye only
+  for (int i = 10; i >= 0; i--) {
+    leftEyeOpen = i / 10.0;
+    drawEyes();
+    delay(20);
+  }
+  delay(200);
+  for (int i = 0; i <= 10; i++) {
+    leftEyeOpen = i / 10.0;
+    drawEyes();
+    delay(20);
+  }
+}
+
+void winkRight() {
+  // Close right eye only
+  for (int i = 10; i >= 0; i--) {
+    rightEyeOpen = i / 10.0;
+    drawEyes();
+    delay(20);
+  }
+  delay(200);
+  for (int i = 0; i <= 10; i++) {
+    rightEyeOpen = i / 10.0;
+    drawEyes();
+    delay(20);
+  }
+}
